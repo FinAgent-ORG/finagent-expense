@@ -1,0 +1,125 @@
+import os
+import time
+from collections import defaultdict, deque
+from datetime import date
+
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import extract, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database import Base, engine, get_db
+from models import Expense
+from schemas import ExpenseCreate, ExpenseResponse, ExpenseTotals
+from security import require_user
+
+load_dotenv()
+
+app = FastAPI(title=os.getenv("APP_NAME", "finagent-expense-service"))
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
+_request_log: dict[str, deque[float]] = defaultdict(deque)
+
+
+@app.middleware("http")
+async def rate_limit(request: Request, call_next):
+    client_ip = (request.headers.get("x-forwarded-for") or request.client.host or "anonymous").split(",")[0].strip()
+    now = time.time()
+    window = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+    limit = int(os.getenv("RATE_LIMIT_REQUESTS", "120"))
+    bucket = _request_log[client_ip]
+    while bucket and now - bucket[0] > window:
+        bucket.popleft()
+    if len(bucket) >= limit:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded.")
+    bucket.append(now)
+    return await call_next(request)
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+@app.get("/api/v1/expenses/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post("/api/v1/expenses", response_model=ExpenseResponse, status_code=status.HTTP_201_CREATED)
+async def create_expense(
+    payload: ExpenseCreate,
+    current_user: dict = Depends(require_user()),
+    db: AsyncSession = Depends(get_db),
+) -> ExpenseResponse:
+    expense = Expense(
+        user_id=current_user["sub"],
+        amount=payload.amount,
+        currency=payload.currency,
+        category=payload.category.value,
+        description=payload.description,
+        expense_date=payload.expense_date or date.today(),
+    )
+    db.add(expense)
+    await db.commit()
+    await db.refresh(expense)
+    return ExpenseResponse.model_validate(expense)
+
+
+@app.get("/api/v1/expenses", response_model=list[ExpenseResponse])
+async def list_expenses(
+    current_user: dict = Depends(require_user()),
+    days: int | None = Query(default=None, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+) -> list[ExpenseResponse]:
+    stmt = select(Expense).where(Expense.user_id == current_user["sub"]).order_by(Expense.expense_date.desc())
+    if days is not None:
+        cutoff = date.today().toordinal() - days
+        stmt = stmt.where(Expense.expense_date >= date.fromordinal(cutoff))
+    rows = (await db.scalars(stmt)).all()
+    return [ExpenseResponse.model_validate(row) for row in rows]
+
+
+@app.get("/api/v1/expenses/totals", response_model=ExpenseTotals)
+async def get_totals(
+    current_user: dict = Depends(require_user()),
+    db: AsyncSession = Depends(get_db),
+) -> ExpenseTotals:
+    today = date.today()
+    user_id = current_user["sub"]
+
+    today_total = await db.scalar(
+        select(func.coalesce(func.sum(Expense.amount), 0)).where(
+            Expense.user_id == user_id,
+            Expense.expense_date == today,
+        )
+    )
+    month_total = await db.scalar(
+        select(func.coalesce(func.sum(Expense.amount), 0)).where(
+            Expense.user_id == user_id,
+            extract("year", Expense.expense_date) == today.year,
+            extract("month", Expense.expense_date) == today.month,
+        )
+    )
+    year_total = await db.scalar(
+        select(func.coalesce(func.sum(Expense.amount), 0)).where(
+            Expense.user_id == user_id,
+            extract("year", Expense.expense_date) == today.year,
+        )
+    )
+
+    return ExpenseTotals(today=float(today_total or 0), month=float(month_total or 0), year=float(year_total or 0))
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host=os.getenv("APP_HOST", "0.0.0.0"), port=int(os.getenv("APP_PORT", "8002")), reload=True)

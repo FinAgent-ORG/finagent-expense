@@ -1,0 +1,6 @@
+aiomysql==0.2.0
+fastapi==0.116.1
+PyJWT==2.10.1
+python-dotenv==1.1.1
+SQLAlchemy==2.0.44
+uvicorn==0.38.0
