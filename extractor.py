@@ -99,7 +99,7 @@ def _build_response(payload: dict, filename: str, source_type: str) -> ExpenseEx
 
 async def _call_ollama(prompt: str, *, images: list[str] | None = None, model: str | None = None) -> dict:
     payload = {
-        "model": model or os.getenv("OLLAMA_MODEL", "llama3.2:1b"),
+        "model": model or os.getenv("OLLAMA_MODEL", "tinyllama"),
         "prompt": prompt,
         "stream": False,
     }
@@ -145,7 +145,7 @@ async def extract_expenses_from_upload(filename: str, content_type: str, file_by
         payload = await _call_ollama(
             f"{prompt} The uploaded receipt or image is attached. Extract expenses visible in the image.",
             images=[base64.b64encode(file_bytes).decode("utf-8")],
-            model=os.getenv("OLLAMA_VISION_MODEL") or os.getenv("OLLAMA_MODEL", "llama3.2:1b"),
+            model=os.getenv("OLLAMA_VISION_MODEL") or os.getenv("OLLAMA_MODEL", "tinyllama"),
         )
         return _build_response(payload, filename, "image")
 
@@ -153,7 +153,7 @@ async def extract_expenses_from_upload(filename: str, content_type: str, file_by
         text_payload = _extract_text_payload(file_bytes, content_type)
         payload = await _call_ollama(
             f"{prompt}\n\nHere is the document content:\n{text_payload[:12000]}",
-            model=os.getenv("OLLAMA_MODEL", "llama3.2:1b"),
+            model=os.getenv("OLLAMA_MODEL", "tinyllama"),
         )
         source_type = "pdf" if content_type == "application/pdf" else "document"
         return _build_response(payload, filename, source_type)
