@@ -3,15 +3,17 @@ import time
 from collections import defaultdict, deque
 from datetime import date
 
+import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Base, engine, get_db
+from extractor import extract_expenses_from_upload
 from models import Expense
-from schemas import ExpenseCreate, ExpenseResponse, ExpenseTotals
+from schemas import ExpenseCreate, ExpenseExtractionResponse, ExpenseResponse, ExpenseTotals
 from security import require_user
 
 load_dotenv()
@@ -30,7 +32,12 @@ _request_log: dict[str, deque[float]] = defaultdict(deque)
 
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
-    client_ip = (request.headers.get("x-forwarded-for") or request.client.host or "anonymous").split(",")[0].strip()
+    client_ip = (
+        request.headers.get("x-forwarded-for")
+        or request.headers.get("x-real-ip")
+        or request.client.host
+        or "anonymous"
+    ).split(",")[0].strip()
     now = time.time()
     window = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
     limit = int(os.getenv("RATE_LIMIT_REQUESTS", "120"))
@@ -72,6 +79,26 @@ async def create_expense(
     await db.commit()
     await db.refresh(expense)
     return ExpenseResponse.model_validate(expense)
+
+
+@app.post("/api/v1/expenses/extract", response_model=ExpenseExtractionResponse)
+async def extract_expenses(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_user()),
+) -> ExpenseExtractionResponse:
+    del current_user
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty.")
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Uploaded file is too large.")
+
+    try:
+        return await extract_expenses_from_upload(file.filename or "upload", file.content_type or "", content)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Unable to reach the extraction model.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Unable to extract expenses from the uploaded file.") from exc
 
 
 @app.get("/api/v1/expenses", response_model=list[ExpenseResponse])

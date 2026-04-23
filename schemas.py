@@ -49,3 +49,29 @@ class ExpenseTotals(BaseModel):
     today: float
     month: float
     year: float
+
+
+class ExtractedExpense(BaseModel):
+    amount: float = Field(gt=0, le=1_000_000)
+    currency: str = Field(default="INR", min_length=3, max_length=8)
+    category: ExpenseCategory
+    description: str = Field(min_length=1, max_length=500)
+    expense_date: date | None = None
+    confidence: float = Field(default=0.0, ge=0, le=1)
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_extract_currency(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("description")
+    @classmethod
+    def clean_extract_description(cls, value: str) -> str:
+        return " ".join(value.strip().split())
+
+
+class ExpenseExtractionResponse(BaseModel):
+    filename: str
+    source_type: str
+    expenses: list[ExtractedExpense] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)

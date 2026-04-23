@@ -1,0 +1,92 @@
+name: Update Helm Values
+
+on:
+  workflow_call:
+    inputs:
+      helm_repo:
+        description: "Helm charts repository"
+        required: true
+        type: string
+
+      helm_branch:
+        description: "Branch in the helm repo"
+        required: true
+        type: string
+
+      values_file:
+        description: "Path to the values file inside the helm repo"
+        required: true
+        type: string
+
+      image_tag:
+        description: "New image tag to write"
+        required: true
+        type: string
+
+      yaml_path:
+        description: "YAML path to update, e.g. .image.tag"
+        required: false
+        default: ".image.tag"
+        type: string
+
+      commit_message:
+        description: "Commit message for the Helm repo update"
+        required: false
+        default: "ci: update image tag"
+        type: string
+
+    secrets:
+      HELM_REPO_TOKEN:
+        required: true
+
+jobs:
+  update-values:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout helm repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.helm_repo }}
+          ref: ${{ inputs.helm_branch }}
+          token: ${{ secrets.HELM_REPO_TOKEN }}
+          path: helm-repo
+
+
+      - name: Validate values file exists
+        working-directory: helm-repo
+        run: |
+          test -f "${{ inputs.values_file }}"
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Update values file
+        working-directory: helm-repo
+        env:
+          NEW_TAG: ${{ inputs.image_tag }}
+          YAML_PATH: ${{ inputs.yaml_path }}
+          VALUES_FILE: ${{ inputs.values_file }}
+        run: |
+          yq -i "${YAML_PATH} = strenv(NEW_TAG)" "$VALUES_FILE"
+          echo "Updated file:"
+          cat "$VALUES_FILE"
+
+      - name: Commit and push
+        working-directory: helm-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "${{ inputs.values_file }}"
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git commit -m "${{ inputs.commit_message }}"
+          git push origin HEAD:${{ inputs.helm_branch }}
