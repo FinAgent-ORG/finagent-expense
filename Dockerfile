@@ -1,28 +1,34 @@
-FROM python:3.12-slim AS runtime
-
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+FROM dhi.io/python:3.13-dev AS builder
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential default-libmysqlclient-dev \
-    && rm -rf /var/lib/apt/lists/*
+ENV PATH="/app/venv/bin:$PATH"
+
+RUN python -m venv /app/venv
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /app/venv/bin/pip install -r requirements.txt
 
-RUN useradd --create-home --shell /usr/sbin/nologin appuser \
-    && chown -R appuser:appuser /app
 
-USER appuser
+FROM dhi.io/python:3.13.13
+
+WORKDIR /app
+
+ENV PATH="/app/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+COPY --from=builder --chown=0:0 --chmod=0555 /app/venv /app/venv
+COPY --chown=0:0 --chmod=0555 app/ ./app/
+COPY --chown=0:0 --chmod=0444 port-mapping.txt ./
+
+USER 10001
 
 EXPOSE 8002
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/api/v1/expenses/health', timeout=3)"
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/api/v1/expenses/health', timeout=3)"]
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002"]

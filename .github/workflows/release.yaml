@@ -1,0 +1,75 @@
+name: FinAgent Expense Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+
+    steps:
+      - id: version
+        run: |
+          TAG='${{ github.event.release.tag_name }}'
+          REGEX='^v[0-9]+\.[0-9]+\.[0-9]+(-((alpha|beta|rc)\.[0-9]+))?$'
+
+          if [[ ! "$TAG" =~ $REGEX ]]; then
+            echo "Invalid tag format: $TAG"
+            exit 1
+          fi
+
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: image
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REPO=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+
+          IMAGE=ghcr.io/$OWNER/$REPO
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+          echo "Using image: $IMAGE"
+
+      - id: sha
+        run: |
+          TAG='${{ github.event.release.tag_name }}'
+
+          SHA=$(git rev-list -n 1 "$TAG")
+          SHORT_SHA="${SHA::7}"
+
+          echo "sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag $TAG -> commit $SHA -> short $SHORT_SHA"
+
+      - name: Promote image
+        run: |
+          IMAGE=${{ steps.image.outputs.image }}
+          SHA=${{ steps.sha.outputs.sha }}
+          VERSION=${{ steps.version.outputs.version }}
+
+          echo "Pulling image: $IMAGE:$SHA"
+          docker pull $IMAGE:$SHA
+
+          echo "Tagging image: $IMAGE:$VERSION"
+          docker tag $IMAGE:$SHA $IMAGE:$VERSION
+
+          echo "Pushing image with retry..."
+          for i in 1 2 3; do
+            docker push $IMAGE:$VERSION && break || sleep 5
+          done
