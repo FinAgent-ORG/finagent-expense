@@ -1,28 +1,37 @@
-FROM python:3.12-slim AS runtime
+FROM cgr.dev/chainguard/python:latest-dev AS builder
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    VENV_PATH=/home/nonroot/venv \
+    PATH="/home/nonroot/venv/bin:${PATH}"
 
-WORKDIR /app
+WORKDIR /home/nonroot/app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential default-libmysqlclient-dev \
-    && rm -rf /var/lib/apt/lists/*
+COPY --chown=nonroot:nonroot requirements.txt ./
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+RUN python -m venv "${VENV_PATH}" \
+    && python -m pip install --upgrade pip \
+    && python -m pip install -r requirements.txt
 
-COPY . .
+COPY --chown=nonroot:nonroot . .
 
-RUN useradd --create-home --shell /usr/sbin/nologin appuser \
-    && chown -R appuser:appuser /app
+FROM cgr.dev/chainguard/python:latest AS runtime
 
-USER appuser
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    VENV_PATH=/home/nonroot/venv \
+    PATH="/home/nonroot/venv/bin:${PATH}"
+
+WORKDIR /home/nonroot/app
+
+COPY --from=builder --chown=nonroot:nonroot /home/nonroot/venv /home/nonroot/venv
+COPY --from=builder --chown=nonroot:nonroot /home/nonroot/app /home/nonroot/app
 
 EXPOSE 8002
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/api/v1/expenses/health', timeout=3)"
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/api/v1/expenses/health', timeout=3)"]
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002"]
+ENTRYPOINT ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002"]
