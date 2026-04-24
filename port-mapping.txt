@@ -1,0 +1,3 @@
+service=finagent-expense-service
+container_port=8002
+app_entrypoint=app.main:app
