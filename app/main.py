@@ -2,6 +2,7 @@ import os
 import time
 from collections import defaultdict, deque
 from datetime import date
+from typing import Annotated
 
 import httpx
 from dotenv import load_dotenv
@@ -10,11 +11,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import Base, engine, get_db
-from extractor import extract_expenses_from_upload
-from models import Expense
-from schemas import ExpenseCreate, ExpenseExtractionResponse, ExpenseResponse, ExpenseTotals
-from security import require_user
+from .database import Base, engine, get_db
+from .extractor import extract_expenses_from_upload
+from .models import Expense
+from .schemas import ExpenseCreate, ExpenseExtractionResponse, ExpenseResponse, ExpenseTotals
+from .security import require_user
 
 load_dotenv()
 
@@ -61,11 +62,11 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/v1/expenses", response_model=ExpenseResponse, status_code=status.HTTP_201_CREATED)
+@app.post("/api/v1/expenses", status_code=status.HTTP_201_CREATED)
 async def create_expense(
     payload: ExpenseCreate,
-    current_user: dict = Depends(require_user()),
-    db: AsyncSession = Depends(get_db),
+    current_user: Annotated[dict, Depends(require_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ExpenseResponse:
     expense = Expense(
         user_id=current_user["sub"],
@@ -81,10 +82,10 @@ async def create_expense(
     return ExpenseResponse.model_validate(expense)
 
 
-@app.post("/api/v1/expenses/extract", response_model=ExpenseExtractionResponse)
+@app.post("/api/v1/expenses/extract")
 async def extract_expenses(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(require_user()),
+    file: Annotated[UploadFile, File(...)],
+    current_user: Annotated[dict, Depends(require_user)],
 ) -> ExpenseExtractionResponse:
     del current_user
     content = await file.read()
@@ -101,11 +102,11 @@ async def extract_expenses(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Unable to extract expenses from the uploaded file.") from exc
 
 
-@app.get("/api/v1/expenses", response_model=list[ExpenseResponse])
+@app.get("/api/v1/expenses")
 async def list_expenses(
-    current_user: dict = Depends(require_user()),
-    days: int | None = Query(default=None, ge=1, le=365),
-    db: AsyncSession = Depends(get_db),
+    current_user: Annotated[dict, Depends(require_user)],
+    days: Annotated[int | None, Query(default=None, ge=1, le=365)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[ExpenseResponse]:
     stmt = select(Expense).where(Expense.user_id == current_user["sub"]).order_by(Expense.expense_date.desc())
     if days is not None:
@@ -115,10 +116,10 @@ async def list_expenses(
     return [ExpenseResponse.model_validate(row) for row in rows]
 
 
-@app.get("/api/v1/expenses/totals", response_model=ExpenseTotals)
+@app.get("/api/v1/expenses/totals")
 async def get_totals(
-    current_user: dict = Depends(require_user()),
-    db: AsyncSession = Depends(get_db),
+    current_user: Annotated[dict, Depends(require_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ExpenseTotals:
     today = date.today()
     user_id = current_user["sub"]
@@ -149,4 +150,4 @@ async def get_totals(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host=os.getenv("APP_HOST", "0.0.0.0"), port=int(os.getenv("APP_PORT", "8002")), reload=True)
+    uvicorn.run("app.main:app", host=os.getenv("APP_HOST", "0.0.0.0"), port=int(os.getenv("APP_PORT", "8002")), reload=True)

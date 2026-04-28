@@ -1,4 +1,4 @@
-name: Docker Build workflow
+name: Reusable Docker Build
 
 on:
   workflow_call:
@@ -96,15 +96,13 @@ jobs:
             docker push ${{ steps.image.outputs.image }}:${{ steps.meta.outputs.tag }} && break || sleep 5
           done
 
-    #   - id: failure
-    #     if: always()
-    #     run: |
-    #       if [ "${{ steps.build.outcome }}" = "failure" ]; then
-    #         echo "stage=build_failed" >> $GITHUB_OUTPUT
-    #       elif [ "${{ steps.scan.outcome }}" = "failure" ]; then
-    #         echo "stage=trivy_scan_failed" >> $GITHUB_OUTPUT
-    #       elif [ "${{ steps.push.outcome }}" = "failure" ]; then
-    #         echo "stage=push_failed" >> $GITHUB_OUTPUT
-    #       else
-    #         echo "stage=success" >> $GITHUB_OUTPUT
-    #       fi
+      - id: failure
+        if: always()
+        run: |
+          if [ "${{ steps.build.outcome }}" = "failure" ]; then
+            echo "stage=image_build_failed" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.push.outcome }}" = "failure" ]; then
+            echo "stage=image_push_failed" >> "$GITHUB_OUTPUT"
+          else
+            echo "stage=success" >> "$GITHUB_OUTPUT"
+          fi
