@@ -3,16 +3,20 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .categories import DEFAULT_CATEGORY, normalize_expense_category
+
 
 class ExpenseCategory(str, Enum):
-    FOOD = "Food"
-    TRANSPORT = "Transport"
+    OPERATIONAL = "Operational"
+    INVENTORY = "Inventory"
+    EMPLOYEE = "Employee"
+    LOGISTICS = "Logistics"
+    MARKETING = "Marketing"
+    SOFTWARE = "Software"
     UTILITIES = "Utilities"
-    ENTERTAINMENT = "Entertainment"
-    GROCERIES = "Groceries"
-    RENT = "Rent"
-    HEALTHCARE = "Healthcare"
-    OTHER = "Other"
+    TRAVEL = "Travel"
+    COMPLIANCE = "Compliance"
+    MISCELLANEOUS = DEFAULT_CATEGORY
 
 
 class ExpenseCreate(BaseModel):
@@ -26,6 +30,13 @@ class ExpenseCreate(BaseModel):
     @classmethod
     def normalize_currency(cls, value: str) -> str:
         return value.strip().upper()
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def normalize_category(cls, value: ExpenseCategory | str | None) -> ExpenseCategory:
+        if isinstance(value, ExpenseCategory):
+            return value
+        return ExpenseCategory(normalize_expense_category(value))
 
     @field_validator("description")
     @classmethod
@@ -63,6 +74,13 @@ class ExtractedExpense(BaseModel):
     @classmethod
     def normalize_extract_currency(cls, value: str) -> str:
         return value.strip().upper()
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def normalize_extract_category(cls, value: ExpenseCategory | str | None) -> ExpenseCategory:
+        if isinstance(value, ExpenseCategory):
+            return value
+        return ExpenseCategory(normalize_expense_category(value))
 
     @field_validator("description")
     @classmethod
