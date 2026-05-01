@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import Base, engine, get_db
 from .extractor import extract_expenses_from_upload
 from .models import Expense
+from .categories import normalize_expense_category
 from .schemas import ExpenseCreate, ExpenseExtractionResponse, ExpenseResponse, ExpenseTotals
 from .security import require_user
 
@@ -29,6 +30,20 @@ app.add_middleware(
 )
 
 _request_log: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _to_expense_response(expense: Expense) -> ExpenseResponse:
+    return ExpenseResponse.model_validate(
+        {
+            "id": expense.id,
+            "user_id": expense.user_id,
+            "amount": expense.amount,
+            "currency": expense.currency,
+            "category": normalize_expense_category(expense.category),
+            "description": expense.description,
+            "expense_date": expense.expense_date,
+        }
+    )
 
 
 @app.middleware("http")
@@ -79,7 +94,7 @@ async def create_expense(
     db.add(expense)
     await db.commit()
     await db.refresh(expense)
-    return ExpenseResponse.model_validate(expense)
+    return _to_expense_response(expense)
 
 
 @app.post("/api/v1/expenses/extract")
@@ -113,7 +128,7 @@ async def list_expenses(
         cutoff = date.today().toordinal() - days
         stmt = stmt.where(Expense.expense_date >= date.fromordinal(cutoff))
     rows = (await db.scalars(stmt)).all()
-    return [ExpenseResponse.model_validate(row) for row in rows]
+    return [_to_expense_response(row) for row in rows]
 
 
 @app.get("/api/v1/expenses/totals")

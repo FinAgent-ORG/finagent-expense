@@ -7,7 +7,8 @@ from io import BytesIO
 import httpx
 from pypdf import PdfReader
 
-from .schemas import ExpenseCategory, ExpenseExtractionResponse, ExtractedExpense
+from .categories import BUSINESS_CATEGORIES, DEFAULT_CATEGORY, normalize_expense_category
+from .schemas import ExpenseExtractionResponse, ExtractedExpense
 
 DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
 PDF_CONTENT_TYPE = "application/pdf"
@@ -30,33 +31,12 @@ def _image_extraction_enabled() -> bool:
     return os.getenv("OLLAMA_IMAGE_EXTRACTION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
-CATEGORY_ALIASES = {
-    "entertainment": ExpenseCategory.ENTERTAINMENT,
-    "food": ExpenseCategory.FOOD,
-    "groceries": ExpenseCategory.GROCERIES,
-    "health": ExpenseCategory.HEALTHCARE,
-    "healthcare": ExpenseCategory.HEALTHCARE,
-    "other": ExpenseCategory.OTHER,
-    "rent": ExpenseCategory.RENT,
-    "transport": ExpenseCategory.TRANSPORT,
-    "travel": ExpenseCategory.TRANSPORT,
-    "utilities": ExpenseCategory.UTILITIES,
-}
-
-
 def _clean_json_response(raw_text: str) -> str:
     trimmed = raw_text.strip()
     if trimmed.startswith("```"):
         lines = [line for line in trimmed.splitlines() if not line.startswith("```")]
         trimmed = "\n".join(lines).strip()
     return trimmed
-
-
-def _normalize_category(value: str | None) -> ExpenseCategory:
-    if not value:
-        return ExpenseCategory.OTHER
-    normalized = value.strip().lower()
-    return CATEGORY_ALIASES.get(normalized, ExpenseCategory.OTHER)
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -79,7 +59,7 @@ def _build_response(payload: dict, filename: str, source_type: str) -> ExpenseEx
                 ExtractedExpense(
                     amount=float(item.get("amount", 0)),
                     currency=str(item.get("currency", "INR")),
-                    category=_normalize_category(item.get("category")).value,
+                    category=normalize_expense_category(item.get("category")),
                     description=str(item.get("description", "")),
                     expense_date=_parse_date(item.get("expense_date")),
                     confidence=float(item.get("confidence", 0.0)),
@@ -127,9 +107,9 @@ async def extract_expenses_from_upload(filename: str, content_type: str, file_by
     prompt = (
         "You are an expense extraction assistant. "
         "Extract every real expense you can identify and return strict JSON with this exact structure: "
-        '{"expenses":[{"amount":123.45,"currency":"INR","category":"Food","description":"Lunch","expense_date":"2026-04-23","confidence":0.92}],"notes":["short note"]}. '
-        "Use one of these categories only: Food, Transport, Utilities, Entertainment, Groceries, Rent, Healthcare, Other. "
-        "If a field is unknown, use sensible defaults: currency INR, category Other, expense_date null. "
+        '{"expenses":[{"amount":123.45,"currency":"INR","category":"Operational","description":"Team lunch","expense_date":"2026-04-23","confidence":0.92}],"notes":["short note"]}. '
+        f"Use one of these categories only: {', '.join(BUSINESS_CATEGORIES)}. "
+        f"If a field is unknown, use sensible defaults: currency INR, category {DEFAULT_CATEGORY}, expense_date null. "
         "Do not include markdown or extra commentary."
     )
 
