@@ -120,8 +120,8 @@ async def extract_expenses(
 @app.get("/api/v1/expenses")
 async def list_expenses(
     current_user: Annotated[dict, Depends(require_user)],
-    days: Annotated[int | None, Query(default=None, ge=1, le=365)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    days: Annotated[int | None, Query(ge=1, le=365)] = None,
 ) -> list[ExpenseResponse]:
     stmt = select(Expense).where(Expense.user_id == current_user["sub"]).order_by(Expense.expense_date.desc())
     if days is not None:
